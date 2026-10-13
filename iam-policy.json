@@ -1,0 +1,49 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAuditReads",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "iam:GenerateCredentialReport",
+        "iam:GetCredentialReport",
+        "iam:GetAccountSummary",
+        "iam:GetAccountPasswordPolicy",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketPolicyStatus",
+        "s3:GetBucketPolicy",
+        "s3:GetAccountPublicAccessBlock",
+        "ec2:DescribeSecurityGroups",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetTrailStatus",
+        "guardduty:ListDetectors",
+        "guardduty:GetDetector"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyEverythingElse",
+      "Effect": "Deny",
+      "NotAction": [
+        "sts:GetCallerIdentity",
+        "iam:GenerateCredentialReport",
+        "iam:GetCredentialReport",
+        "iam:GetAccountSummary",
+        "iam:GetAccountPasswordPolicy",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketPolicyStatus",
+        "s3:GetBucketPolicy",
+        "s3:GetAccountPublicAccessBlock",
+        "ec2:DescribeSecurityGroups",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetTrailStatus",
+        "guardduty:ListDetectors",
+        "guardduty:GetDetector"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

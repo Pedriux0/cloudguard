@@ -1,0 +1,141 @@
+# ============================================================
+# cloudguard-role.yaml - CloudFormation template for the audit role
+# ------------------------------------------------------------
+# What is this?
+#   CloudFormation is AWS's "infrastructure as code" service:
+#   you describe resources in a file and AWS creates them.
+#   This file creates ONE thing: an IAM role called
+#   CloudGuardAuditRole that cloudguard uses to read your account.
+#
+# Cost: $0. IAM roles and CloudFormation stacks for IAM resources
+#   are free.
+#
+# Deploy:
+#   aws cloudformation deploy \
+#     --template-file infra/cloudguard-role.yaml \
+#     --stack-name cloudguard-audit-role \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides TrustedPrincipalArn=arn:aws:iam::<ACCOUNT_ID>:user/<YOU>
+#
+# Requirements covered: 8.1, 8.2, 8.3, 8.4, 8.5
+# ============================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: cloudguard read-only audit role (MFA required, allow-list + explicit deny). Free.
+
+# ============================================================
+# SECTION 1: Inputs
+# ------------------------------------------------------------
+# The ONE identity that may use this role. Use a specific
+# user or role ARN, not the whole account (":root").
+# SECURITY: least privilege applies to WHO can assume the role,
+# not just to what the role can do.
+# ============================================================
+Parameters:
+  TrustedPrincipalArn:
+    Type: String
+    Description: ARN of the IAM user or role allowed to assume the audit role (same account).
+    AllowedPattern: "^arn:aws:iam::[0-9]{12}:(user|role)/.+$"
+
+Resources:
+  CloudGuardAuditRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudGuardAuditRole
+      Description: Read-only role for the cloudguard audit CLI. Cannot modify resources.
+
+      # SECURITY: 3600s (1 hour) is the smallest value AWS allows here.
+      # cloudguard itself asks for 900s (15 min) sessions.
+      MaxSessionDuration: 3600
+
+      # ========================================================
+      # SECTION 2: Trust policy - WHO can use this role, and HOW
+      # --------------------------------------------------------
+      # Only the trusted principal, and only if they just did MFA:
+      #   aws:MultiFactorAuthPresent = true   -> MFA was used
+      #   aws:MultiFactorAuthAge < 900        -> MFA was less than 15 min ago
+      # Without a fresh MFA code, AssumeRole is refused by AWS.
+      # ========================================================
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAssumeOnlyWithFreshMFA
+            Effect: Allow
+            Principal:
+              AWS: !Ref TrustedPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: "true"
+              NumericLessThan:
+                aws:MultiFactorAuthAge: "900"
+
+      # ========================================================
+      # SECTION 3: Permission policy - WHAT the role can do
+      # --------------------------------------------------------
+      # Statement A (Allow): exactly the 15 read actions the
+      #   checks need. No wildcards like "s3:*" or "*".
+      # Statement B (Deny):  everything EXCEPT those 15.
+      #   In IAM an explicit Deny always beats any Allow. So if
+      #   someone later attaches AdministratorAccess to this
+      #   role, writes are STILL denied.
+      #
+      # Resource "*" is required: these list/describe/account-level
+      # actions don't support per-resource permissions.
+      # ========================================================
+      Policies:
+        - PolicyName: CloudGuardReadOnlyAllowList
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowAuditReads
+                Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                  - iam:GenerateCredentialReport
+                  - iam:GetCredentialReport
+                  - iam:GetAccountSummary
+                  - iam:GetAccountPasswordPolicy
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketPolicyStatus
+                  - s3:GetBucketPolicy
+                  - s3:GetAccountPublicAccessBlock
+                  - ec2:DescribeSecurityGroups
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - guardduty:ListDetectors
+                  - guardduty:GetDetector
+                Resource: "*"
+              # Must be the SAME 15 actions as above. A test checks this.
+              - Sid: DenyEverythingElse
+                Effect: Deny
+                NotAction:
+                  - sts:GetCallerIdentity
+                  - iam:GenerateCredentialReport
+                  - iam:GetCredentialReport
+                  - iam:GetAccountSummary
+                  - iam:GetAccountPasswordPolicy
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketPolicyStatus
+                  - s3:GetBucketPolicy
+                  - s3:GetAccountPublicAccessBlock
+                  - ec2:DescribeSecurityGroups
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - guardduty:ListDetectors
+                  - guardduty:GetDetector
+                Resource: "*"
+
+      Tags:
+        - Key: project
+          Value: cloudguard
+
+# ============================================================
+# SECTION 4: Outputs - values you'll need to run cloudguard
+# ============================================================
+Outputs:
+  RoleArn:
+    Description: Use this as --role-arn or CLOUDGUARD_ROLE_ARN
+    Value: !GetAtt CloudGuardAuditRole.Arn

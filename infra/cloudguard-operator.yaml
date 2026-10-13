@@ -1,0 +1,77 @@
+# ============================================================
+# cloudguard-operator.yaml - the least-privilege user who RUNS cloudguard
+# ------------------------------------------------------------
+# What is this?
+#   Creates ONE IAM user, "cloudguard-operator", with exactly ONE
+#   permission: sts:AssumeRole on CloudGuardAuditRole. The role
+#   itself only says yes when an MFA code is included.
+#   That's all the person running cloudguard needs.
+#
+#   On its own this user can't read or change anything in the account.
+#   It can only "knock on the door" of the audit role, and AWS
+#   opens that door only with a fresh MFA code.
+#
+# Deploy order (the role's trust policy must point at a user that exists):
+#   1. this stack  -> creates the user and outputs its ARN
+#   2. cloudguard-role.yaml with TrustedPrincipalArn = that ARN
+#
+# Cost: $0 (IAM users and policies are free).
+# ============================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: cloudguard operator user. Its only permission is assuming CloudGuardAuditRole with MFA. Free.
+
+Resources:
+  OperatorUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: cloudguard-operator
+      # SECURITY: no LoginProfile = no console password. This user
+      # exists only for the CLI, which shrinks the attack surface.
+      Policies:
+        - PolicyName: CloudGuardOperatorAssumeOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ====================================================
+              # SECTION 1: The one thing this user may do
+              # ----------------------------------------------------
+              # Assume exactly one role, by exact ARN.
+              # The role ARN is built from its name with !Sub, so this
+              # stack doesn't depend on the role stack (no circular
+              # dependency).
+              #
+              # Where is the MFA check? In the ROLE's trust policy
+              # (cloudguard-role.yaml). This user signs AssumeRole with a
+              # long-term access key, and AWS only adds the MFA condition
+              # key to requests made with short-term credentials. An MFA
+              # condition here would block every login. AWS's documented
+              # pattern is: the user policy allows AssumeRole, and the
+              # trust policy demands MFA.
+              # ====================================================
+              - Sid: AssumeAuditRoleOnly
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/CloudGuardAuditRole
+
+              # ====================================================
+              # SECTION 2: Guardrail - deny everything else
+              # ----------------------------------------------------
+              # An explicit Deny beats any Allow. If someone later
+              # attaches a broad policy to this user by mistake,
+              # it still can't do anything except assume the role.
+              # (sts:GetCallerIdentity always works in AWS, even
+              # when denied, so the tool's preflight check still runs.)
+              # ====================================================
+              - Sid: DenyEverythingElse
+                Effect: Deny
+                NotAction: sts:AssumeRole
+                Resource: "*"
+      Tags:
+        - Key: project
+          Value: cloudguard
+
+Outputs:
+  OperatorArn:
+    Description: Pass this as TrustedPrincipalArn when deploying cloudguard-role.yaml
+    Value: !GetAtt OperatorUser.Arn

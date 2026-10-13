@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeAuditRoleOnly",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/CloudGuardAuditRole"
+    },
+    {
+      "Sid": "DenyEverythingElse",
+      "Effect": "Deny",
+      "NotAction": "sts:AssumeRole",
+      "Resource": "*"
+    }
+  ]
+}

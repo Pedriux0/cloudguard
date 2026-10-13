@@ -1,0 +1,15 @@
+# Tools write to $TMPDIR/cloudguard-sandbox, but ignore these in case
+# someone runs Python or pytest directly in the project.
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+venv/
+.venv/
+.DS_Store
+
+# SECURITY: never commit exported audit reports (they map your weak spots).
+*-report.md
+*-report.json
+report.md
+report.json

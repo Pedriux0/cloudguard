@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAssumeOnlyWithFreshMFA",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<ACCOUNT_ID>:user/<YOUR_USER>" },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "Bool": { "aws:MultiFactorAuthPresent": "true" },
+        "NumericLessThan": { "aws:MultiFactorAuthAge": "900" }
+      }
+    }
+  ]
+}

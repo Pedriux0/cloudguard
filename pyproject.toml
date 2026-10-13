@@ -1,0 +1,40 @@
+# ============================================================
+# pyproject.toml - project settings
+# ------------------------------------------------------------
+# This file tells Python's packaging tools:
+#   - what the project is called
+#   - which libraries it needs (pinned to exact versions)
+#   - which command to install ("cloudguard")
+# SECURITY: versions are pinned exactly (==) so a surprise
+# upstream release can't change what runs on your machine.
+# ============================================================
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudguard"
+version = "0.1.0"
+description = "Read-only, MFA-protected AWS security audit CLI (portfolio project)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3==1.43.110",   # AWS SDK for Python: how we talk to AWS
+    "rich==15.0.0",      # pretty, colored tables in the terminal
+]
+
+[project.optional-dependencies]
+# moto fakes AWS locally. Needed for --demo mode and for tests.
+demo = ["moto[ec2,iam,s3]==5.2.3"]
+dev = ["moto[ec2,iam,s3]==5.2.3", "pytest==9.1.1"]
+
+[project.scripts]
+# After install, typing `cloudguard` runs cloudguard/cli.py:main()
+cloudguard = "cloudguard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
