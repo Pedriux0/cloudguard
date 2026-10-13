@@ -54,6 +54,35 @@ def test_identity_must_be_the_audit_role():
     assert not auth._is_audit_role("arn:aws:sts::111122223333:assumed-role/CloudGuardAuditRole/other")
 
 
+def test_base_credentials_from_a_provider_that_calls_aws(tmp_path, monkeypatch):
+    """
+    SSO and web-identity profiles fetch credentials with their own AWS
+    calls (sso:GetRoleCredentials, sts:AssumeRoleWithWebIdentity). The
+    guard must not block those, only the calls cloudguard itself makes.
+    """
+    from moto import mock_aws
+
+    token = tmp_path / "token"
+    token.write_text("fake-oidc-token")
+    for var in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/ci")
+    monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", str(token))
+
+    with mock_aws():
+        auth = AwsAuthenticator(AuthConfig(
+            role_arn="arn:aws:iam::123456789012:role/CloudGuardAuditRole",
+            mfa_serial="arn:aws:iam::123456789012:mfa/me", region="us-east-1", profile=None,
+        ))
+        auth.preflight()   # used to raise BlockedOperationError
+
+        # Our own calls are still guarded.
+        from cloudguard.guard import BlockedOperationError
+        base = auth._guarded_base(auth._loader)
+        with pytest.raises(BlockedOperationError):
+            base.client("iam").list_users()
+
+
 def test_demo_codes_are_random():
     auths = [DemoAuthenticator(AuthConfig("r", "m", "us-east-1", None)) for _ in range(20)]
     codes = {a.demo_code for a in auths}

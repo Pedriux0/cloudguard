@@ -61,6 +61,10 @@ class Terminal:
         self.console = Console(highlight=False)
         # Bytes typed but not yet used as a full line (see read_line).
         self._pending = b""
+        # True while the screen may show account data (set after unlock,
+        # cleared by wipe). The exit safety net only wipes when it's set,
+        # so plain messages like "Setup error: ..." stay readable.
+        self._sensitive = False
 
     # --------------------------------------------------------
     # Output
@@ -68,13 +72,23 @@ class Terminal:
     def print(self, *args, **kwargs) -> None:
         self.console.print(*args, **kwargs)
 
+    def mark_sensitive(self) -> None:
+        """The screen may now show account data; wipe it before exit."""
+        self._sensitive = True
+
     def wipe(self) -> None:
         """Clear the screen and scrollback (Req 12.2, 13.3)."""
+        self._sensitive = False
         try:
             sys.stdout.write(CLEAR_ALL)
             sys.stdout.flush()
         except (OSError, ValueError):
             pass  # the terminal is already closed; nothing left to wipe
+
+    def wipe_if_sensitive(self) -> None:
+        """Exit safety net: wipe only if account data might still be shown."""
+        if self._sensitive:
+            self.wipe()
 
     # --------------------------------------------------------
     # Input: hidden (for the MFA code)

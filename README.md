@@ -32,7 +32,7 @@ lock               # lock now
 quit               # wipe screen and exit
 ```
 
-`sh dev.sh test` runs the 55 tests. `sh dev.sh clean` deletes the sandbox.
+`sh dev.sh test` runs the 63 tests. `sh dev.sh clean` deletes the sandbox.
 
 ## How it works
 
@@ -150,10 +150,10 @@ A test (`tests/test_guard.py`) fails if the allow-list in `guard.py`, `iam-polic
 
 **Authentication.**
 - The role's trust policy requires `aws:MultiFactorAuthPresent = true` and an MFA code less than 15 minutes old. It trusts one specific user or role ARN, not the whole account.
-- Your base credentials are guarded so they can only call `AssumeRole` and `GetCallerIdentity`.
+- Your base credentials are guarded so they can only call `AssumeRole` and `GetCallerIdentity`. They're loaded first and then copied into a separate guarded session, so SSO and web-identity profiles can still fetch their own credentials. Every call cloudguard itself makes still goes through the guard.
 - After login, the session identity must match `assumed-role/CloudGuardAuditRole/cloudguard-*`.
 - Errors are always the generic "Authentication failed", so an attacker learns nothing about which part was wrong.
-- After 3 wrong codes, the tool exits.
+- After 3 wrong codes, the tool exits. Expired or missing base credentials are reported as a setup error (exit 2), not counted as a wrong code.
 
 **Short-lived access.**
 - STS sessions are 900 seconds (15 minutes), the shortest AWS allows.
@@ -176,6 +176,32 @@ A test (`tests/test_guard.py`) fails if the allow-list in `guard.py`, `iam-polic
 | Someone at your unlocked laptop | 10-min idle lock + screen and scrollback wipe | Terminals that ignore `ESC[3J`; tmux/screen buffers; terminal session logging |
 | Data left on disk | Memory-only keys, no history, no logs, no core dumps | OS swap or hibernation files. Python can't securely zero memory, so cloudguard drops references and runs the garbage collector |
 | Long-lived access | 15-min keys, role max 1 hour | Nothing beyond 15 minutes |
+| Hostile resource names (e.g. a security group named `[/]`) | Every value from AWS or the user is escaped before rendering, so it can't crash the tool or restyle/hide findings | None known |
+
+## How it was built
+
+I built cloudguard in two phases, using AI coding tools the way I'd use them on a team: as a fast first draft, and then as a reviewer that has to prove every bug it reports.
+
+**Phase 1: spec-driven build in Kiro IDE.** I wrote the project as a spec first: requirements, design, and a task list (in `.kiro/specs/aws-security-audit-cli/`). Then I built it in [Kiro](https://kiro.dev) using its **Auto** model setting to keep token costs low. Every security decision traces back to a numbered requirement, and code comments cite them (e.g. `Req 11.4`).
+
+**Phase 2: review, bug fixing, and hardening with Claude Code (Opus 5.5).** I used Claude Code to audit the whole codebase, reproduce each suspected bug with a script before changing anything, and fix the bugs with regression tests. Every new test fails on the old code and passes on the fixed code. The 5 bugs fixed:
+
+| Bug | Impact | Fix |
+|---|---|---|
+| Text with `[` `]` (typed by the user, or a security group name from AWS) was read as `rich` style markup | Typing `[/]` crashed the tool. A crafted security group name could crash `audit` or restyle the report | Escape every untrusted value before rendering |
+| `export` onto a directory or symlink crashed on the "overwrite?" retry | The whole session ended with "Unexpected error" | Error handling now covers the retry too |
+| The exit-time screen wipe always ran | Setup errors such as "No AWS credentials found" were erased the moment they appeared | Wipe on exit only if account data was shown |
+| The read-only guard was installed before credentials were resolved | AWS SSO and web-identity profiles couldn't log in (the guard blocked `sso:GetRoleCredentials`) | Resolve credentials on a separate loader session, then make every API call through a guarded copy |
+| Ctrl+C before login | Printed a Python traceback, which the design forbids | Handled as a clean exit |
+
+Test suite: 56 → 63 tests, all passing.
+
+**Known gaps (next steps):**
+- S3-03 only looks at bucket policies, not ACLs.
+- `ListBuckets` isn't paginated (needed for accounts with a raised bucket quota).
+- LOG-01 reports ERROR if any single trail's status call fails, even when another trail is logging.
+- Role ARNs are assumed to be in the `aws` partition (not GovCloud or China).
+- Export paths can't contain spaces.
 
 ## Using it with a real AWS account (least privilege)
 

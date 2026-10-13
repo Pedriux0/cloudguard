@@ -109,6 +109,9 @@ class FakeTerminal:
     def wipe(self) -> None:
         self.wipes += 1
 
+    def mark_sensitive(self) -> None:
+        pass
+
     def flush_input(self) -> None:
         pass
 

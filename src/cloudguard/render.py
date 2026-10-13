@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -42,6 +43,10 @@ SEVERITY_STYLE = {
 }
 DEMO_BANNER = "[bold black on yellow] DEMO DATA - fake AWS account (moto), no real resources [/]"
 
+# SECURITY: rich reads "[...]" as style tags. Values that come from AWS
+# (a security group may be named "[/]") or from the user must be escaped,
+# or they can crash the renderer or restyle/hide parts of the report.
+
 
 # ============================================================
 # SECTION 2: Header (who / where / when / how many)
@@ -52,7 +57,7 @@ def header_text(report: Report) -> str:
     s = c["status"]
     sev = c["severity"]
     return (
-        f"Account [bold]{report.account_id}[/]  Region [bold]{report.region}[/]  "
+        f"Account [bold]{escape(report.account_id)}[/]  Region [bold]{escape(report.region)}[/]  "
         f"Time {report.generated_at:%Y-%m-%d %H:%M:%S} UTC\n"
         f"[red]FAIL {s['FAIL']}[/]  [yellow]ERROR {s['ERROR']}[/]  [green]PASS {s['PASS']}[/]   "
         f"|  CRITICAL {sev['CRITICAL']}  HIGH {sev['HIGH']}  MEDIUM {sev['MEDIUM']}  LOW {sev['LOW']}"
@@ -78,8 +83,8 @@ def summary_table(report: Report) -> Table:
             f"[{SEVERITY_STYLE[f.severity]}]{f.severity.name}[/]",
             f"[{STATUS_STYLE[f.status]}]{f.status.value}[/]",
             f.check_id,
-            f.resource,
-            f.title,
+            escape(f.resource),
+            escape(f.title),
         )
     return table
 
@@ -100,11 +105,11 @@ def detail_view(finding: Finding) -> Panel:
     body = (
         f"[bold]Status:[/] [{STATUS_STYLE[finding.status]}]{finding.status.value}[/]   "
         f"[bold]Severity:[/] {finding.severity.name}   [bold]CIS:[/] {finding.cis}\n"
-        f"[bold]Resource:[/] {finding.resource}\n"
-        f"[bold]Detail:[/] {finding.detail or '-'}\n"
-        f"[bold]Fix:[/] {finding.remediation}"
+        f"[bold]Resource:[/] {escape(finding.resource)}\n"
+        f"[bold]Detail:[/] {escape(finding.detail or '-')}\n"
+        f"[bold]Fix:[/] {escape(finding.remediation)}"
     )
-    return Panel(body, title=f"{finding.check_id} - {finding.title}", expand=False)
+    return Panel(body, title=escape(f"{finding.check_id} - {finding.title}"), expand=False)
 
 
 # ============================================================

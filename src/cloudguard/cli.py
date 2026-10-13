@@ -83,8 +83,9 @@ def harden_process(terminal) -> None:
     signal.signal(signal.SIGHUP, _graceful_exit)
     signal.signal(signal.SIGTERM, _graceful_exit)
 
-    # Last safety net: wipe the screen whenever the process exits.
-    atexit.register(terminal.wipe)
+    # Last safety net: wipe the screen on exit if account data may still
+    # be on it. (Always wiping would also erase setup error messages.)
+    atexit.register(terminal.wipe_if_sensitive)
 
 
 # ============================================================
@@ -170,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
 
     except SystemExit as exc:            # from the SIGHUP/SIGTERM handler
         return int(exc.code or 0)
+    except KeyboardInterrupt:            # Ctrl+C before the session started
+        return 0
     except Exception:                    # noqa: BLE001
         # SECURITY: no traceback. It could show internal details.
         terminal.wipe()

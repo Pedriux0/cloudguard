@@ -29,8 +29,10 @@ import time
 from datetime import datetime, timezone
 from typing import Callable
 
+from rich.markup import escape
+
 from cloudguard import render
-from cloudguard.auth import AuditSession, AuthFailed, AwsAuthenticator
+from cloudguard.auth import AuditSession, AuthConfigError, AuthFailed, AwsAuthenticator
 from cloudguard.checks.base import AuditContext
 from cloudguard.export import write_private
 from cloudguard.models import Report
@@ -46,6 +48,7 @@ MAX_AUTH_ATTEMPTS = 3        # Req 11.5: exit after 3 wrong codes in a row
 
 # Exit codes, so scripts and humans know how it ended.
 EXIT_OK = 0
+EXIT_CONFIG = 2
 EXIT_AUTH_FAILED = 3
 
 HELP_TEXT = """[bold]Commands[/]
@@ -104,6 +107,8 @@ class SecureSession:
                     return EXIT_OK
                 if outcome == "failed":
                     return EXIT_AUTH_FAILED
+                if outcome == "config":
+                    return EXIT_CONFIG
 
                 if self._command_loop() == "quit":
                     return EXIT_OK
@@ -141,6 +146,11 @@ class SecureSession:
                 left = MAX_AUTH_ATTEMPTS - attempt
                 self.term.print(f"[red]Authentication failed.[/] {left} attempt(s) left.")
                 continue
+            except AuthConfigError as exc:
+                # Base credentials missing or expired (e.g. SSO token ran
+                # out while locked). A setup problem, not a wrong code.
+                self.term.print(f"[red]Setup error:[/] {escape(str(exc))}")
+                return "config"
             finally:
                 # SECURITY: drop our reference to the code right away.
                 code = None  # noqa: F841
@@ -158,6 +168,8 @@ class SecureSession:
         remaining = (session.expires_at - datetime.now(timezone.utc)).total_seconds()
         self._deadline = self.clock() + max(0.0, min(remaining, 900.0))
         self.term.wipe()
+        # From now on the screen may show account data: wipe it on exit.
+        self.term.mark_sensitive()
         self.term.print(f"[green]Unlocked.[/] Account {session.account_id}. Type 'help' for commands.")
 
     # ============================================================
@@ -229,7 +241,7 @@ class SecureSession:
         elif cmd == "export":
             return self._cmd_export(args)
         else:
-            self.term.print(f"Unknown command '{cmd}'. Type 'help'.")
+            self.term.print(f"Unknown command '{escape(cmd)}'. Type 'help'.")
         return None
 
     def _cmd_audit(self) -> None:
@@ -252,7 +264,7 @@ class SecureSession:
             return
         matches = render.select_findings(self.report, args[0])
         if not matches:
-            self.term.print(f"No findings match '{args[0]}'.")
+            self.term.print(f"No findings match '{escape(args[0])}'.")
         for finding in matches:
             self.term.print(render.detail_view(finding))
 
@@ -284,20 +296,22 @@ class SecureSession:
             return None
 
         try:
-            written = write_private(path, content, overwrite=False)
-        except FileExistsError:
-            answer = self._confirm("File exists. Overwrite? Type 'yes' to confirm: ")
-            if answer is None:
-                return "locked"
-            if answer != "yes":
-                self.term.print("Export cancelled.")
-                return None
-            written = write_private(path, content, overwrite=True)
+            try:
+                written = write_private(path, content, overwrite=False)
+            except FileExistsError:
+                answer = self._confirm("File exists. Overwrite? Type 'yes' to confirm: ")
+                if answer is None:
+                    return "locked"
+                if answer != "yes":
+                    self.term.print("Export cancelled.")
+                    return None
+                # Can still fail: the path may be a directory or a symlink.
+                written = write_private(path, content, overwrite=True)
         except OSError as exc:
-            self.term.print(f"[red]Could not write file:[/] {exc.strerror or exc}")
+            self.term.print(f"[red]Could not write file:[/] {escape(str(exc.strerror or exc))}")
             return None
 
-        self.term.print(f"[green]Saved[/] {written} (permissions 0600).")
+        self.term.print(f"[green]Saved[/] {escape(written)} (permissions 0600).")
         return None
 
     def _confirm(self, prompt: str) -> str | None:

@@ -100,7 +100,9 @@ class AuthFailed(Exception):
 class AwsAuthenticator:
     def __init__(self, config: AuthConfig) -> None:
         self.config = config
-        self._base: boto3.Session | None = None
+        # Unguarded session used ONLY to resolve base credentials
+        # (see _guarded_base). Never used to call AWS directly.
+        self._loader: boto3.Session | None = None
 
     # --------------------------------------------------------
     # Step 1: load and check base credentials (no MFA yet)
@@ -108,19 +110,11 @@ class AwsAuthenticator:
     def preflight(self) -> None:
         """Make sure base credentials exist before we ask for MFA (Req 1.5)."""
         try:
-            base = boto3.Session(profile_name=self.config.profile, region_name=self.config.region)
+            loader = boto3.Session(profile_name=self.config.profile, region_name=self.config.region)
         except ProfileNotFound as exc:
             raise AuthConfigError(f"AWS profile not found: {self.config.profile}") from exc
 
-        # SECURITY (Req 1.6): base creds may only call AssumeRole
-        # and GetCallerIdentity. Installed BEFORE any client exists.
-        install_guard(base, BASE_OPERATIONS)
-
-        if base.get_credentials() is None:
-            raise AuthConfigError(
-                "No AWS credentials found. Configure a profile (aws configure / aws sso login) "
-                "or pass --profile."
-            )
+        base = self._guarded_base(loader)
         try:
             # Confirms the base credentials actually work.
             # The result is NOT shown to the user (Req 11.1).
@@ -128,7 +122,43 @@ class AwsAuthenticator:
         except (ClientError, BotoCoreError) as exc:
             raise AuthConfigError("AWS credentials are invalid or expired.") from exc
 
-        self._base = base
+        self._loader = loader
+
+    def _guarded_base(self, loader: boto3.Session) -> boto3.Session:
+        """
+        A fresh, guarded session holding the current base credentials.
+
+        Why two sessions? SSO and web-identity profiles make their own
+        AWS calls to fetch credentials (sso:GetRoleCredentials,
+        sts:AssumeRoleWithWebIdentity), through the session they belong
+        to. A guard on that session would block them. So the loader
+        resolves credentials, and everything OUR code sends goes through
+        a separate session that has the guard.
+
+        Rebuilt on every login, so refreshable credentials (SSO, assumed
+        role profiles) are re-read instead of going stale while locked.
+        """
+        try:
+            creds = loader.get_credentials()
+            frozen = creds.get_frozen_credentials() if creds is not None else None
+        except (ClientError, BotoCoreError) as exc:
+            raise AuthConfigError("AWS credentials are invalid or expired.") from exc
+        if frozen is None or not frozen.access_key:
+            raise AuthConfigError(
+                "No AWS credentials found. Configure a profile (aws configure / aws sso login) "
+                "or pass --profile."
+            )
+
+        base = boto3.Session(
+            aws_access_key_id=frozen.access_key,
+            aws_secret_access_key=frozen.secret_key,
+            aws_session_token=frozen.token,
+            region_name=self.config.region,
+        )
+        # SECURITY (Req 1.6): base creds may only call AssumeRole
+        # and GetCallerIdentity. Installed BEFORE any client exists.
+        install_guard(base, BASE_OPERATIONS)
+        return base
 
     # --------------------------------------------------------
     # Step 2: check the code's format (subclasses may add more)
@@ -141,13 +171,14 @@ class AwsAuthenticator:
     # Steps 3 to 5: assume the role, build the session, verify it
     # --------------------------------------------------------
     def authenticate(self, mfa_code: str) -> AuditSession:
-        if self._base is None:
+        if self._loader is None:
             self.preflight()
         self._verify_code(mfa_code)
+        base = self._guarded_base(self._loader)
 
         # Step 3: trade the MFA code for 15-minute keys.
         try:
-            resp = self._base.client("sts").assume_role(
+            resp = base.client("sts").assume_role(
                 RoleArn=self.config.role_arn,
                 RoleSessionName=f"{SESSION_NAME_PREFIX}{int(time.time())}",
                 SerialNumber=self.config.mfa_serial,

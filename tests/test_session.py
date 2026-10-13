@@ -162,3 +162,63 @@ def test_export_with_yes_writes_private_file(demo, tmp_path):
     assert target.exists()
     assert (target.stat().st_mode & 0o777) == 0o600
     assert '"demo": true' in target.read_text()
+
+
+def test_export_onto_a_directory_reports_error_and_keeps_running(demo, tmp_path):
+    """The overwrite retry used to crash the whole session (IsADirectoryError)."""
+    auth, _ = demo
+    script = [auth.demo_code, "audit", f"export json {tmp_path}", "yes", "yes", "help", "quit"]
+    session, term, _ = make_session(demo, script)
+    assert session.run() == EXIT_OK
+    assert "Could not write file" in term.output
+    assert "Commands" in term.output   # `help` still ran afterwards
+
+
+# ============================================================
+# SECTION 4: Untrusted text is never read as rich markup
+# ============================================================
+
+def test_brackets_in_typed_input_do_not_crash(demo):
+    auth, _ = demo
+    script = [auth.demo_code, "[/]", "audit", "show [/]", "quit"]
+    session, term, _ = make_session(demo, script)
+    assert session.run() == EXIT_OK
+    assert "Unknown command '[/]'" in term.output
+    assert "No findings match '[/]'" in term.output
+
+
+def test_security_group_name_with_markup_is_shown_literally(demo):
+    """AWS allows "[" and "]" in security group names."""
+    import boto3
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    vpc_id = ec2.describe_vpcs()["Vpcs"][0]["VpcId"]
+    group = ec2.create_security_group(GroupName="ops[/][red]", Description="x", VpcId=vpc_id)
+    ec2.authorize_security_group_ingress(
+        GroupId=group["GroupId"],
+        IpPermissions=[{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}],
+    )
+    auth, _ = demo
+    session, term, _ = make_session(demo, [auth.demo_code, "audit", "show NET-01", "quit"])
+    assert session.run() == EXIT_OK
+    assert "ops[/][red]" in term.output
+
+
+# ============================================================
+# SECTION 5: Setup problems during login
+# ============================================================
+
+def test_expired_base_credentials_exit_as_setup_error(demo, monkeypatch):
+    """Not counted as a wrong MFA code: exit 2 with a clear message."""
+    from cloudguard.auth import AuthConfigError
+    from cloudguard.session import EXIT_CONFIG
+
+    def expired(_loader):
+        raise AuthConfigError("AWS credentials are invalid or expired.")
+
+    auth, _ = demo
+    session, term, _ = make_session(demo, [auth.demo_code])
+    monkeypatch.setattr(session.auth, "_guarded_base", expired)
+    assert session.run() == EXIT_CONFIG
+    assert "Setup error:" in term.output
+    assert "Authentication failed" not in term.output
