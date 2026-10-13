@@ -4,6 +4,12 @@ A read-only, MFA-protected security audit tool for AWS. It checks an account for
 
 Built as a portfolio project to show CompTIA Security+ and AWS Solutions Architect Associate skills applied to a real tool.
 
+![cloudguard demo: unlock with MFA, run the audit, view a fix, then lock](docs/demo.gif)
+
+*Demo mode against a fake AWS account: unlock with MFA, `audit`, `show S3-03`, then `lock` wipes the screen and asks for MFA again.*
+
+**Animated architecture walkthrough:** [Inside cloudguard](https://claude.ai/artifact/Xy8NhqMhzjELfHtVmQypew) follows one session step by step, from the MFA code and the 15-minute keys to the blocked write and the self-lock.
+
 ## The problem
 
 Most cloud breaches don't come from clever exploits. They come from simple mistakes: a public S3 bucket, SSH open to the internet, a root account without MFA, logging switched off. cloudguard finds those mistakes in seconds.
@@ -32,7 +38,7 @@ lock               # lock now
 quit               # wipe screen and exit
 ```
 
-`sh dev.sh test` runs the 63 tests. `sh dev.sh clean` deletes the sandbox.
+`sh dev.sh test` runs the 64 tests. `sh dev.sh clean` deletes the sandbox.
 
 ## How it works
 
@@ -180,31 +186,35 @@ A test (`tests/test_guard.py`) fails if the allow-list in `guard.py`, `iam-polic
 
 ## How it was built
 
-I built cloudguard in two phases, using AI coding tools the way I'd use them on a team: as a fast first draft, and then as a reviewer that has to prove every bug it reports.
+I built cloudguard in two phases. First I designed and hardened it in Kiro, AWS's AI IDE, in several rounds of review. Then, even though I was satisfied with it, I had a second tool, Claude Code, check everything again. That review had to prove every bug it reported.
 
 ```mermaid
 flowchart LR
-    subgraph P1["Phase 1: Kiro IDE, Auto model (low token cost)"]
+    subgraph P1["Phase 1: Kiro (AWS), free AWS credits, Auto model"]
         direction TB
-        R["Requirements<br/>numbered, security-first"] --> D["Design<br/>3-layer read-only, MFA, auto-lock"]
-        D --> T["Task list"]
-        T --> B["Working tool<br/>12 CIS checks, 56 tests passing"]
+        I["Structure the idea<br/>spec: requirements, design, tasks"] --> L["Add security layers<br/>least privilege, role-based access,<br/>MFA, time limits, no trace"]
+        L --> V["Review the changes<br/>round after round"]
+        V --> B["Satisfied: working tool<br/>12 CIS checks, 56 tests passing"]
     end
 
-    subgraph P2["Phase 2: Claude Code, Opus 5.5 (review and hardening)"]
+    subgraph P2["Phase 2: second review, Claude Code (Opus 5.5)"]
         direction TB
         A["Audit the whole codebase"] --> X["Reproduce each bug<br/>with a script first"]
         X --> F["Fix: 5 bugs"]
         F --> G["Regression tests<br/>fail on old code, pass on new"]
-        G --> S["63 tests passing<br/>README and known gaps updated"]
+        G --> S["64 tests passing<br/>demo GIF, walkthrough,<br/>known gaps documented"]
     end
 
     B -->|"all tests green,<br/>but 5 real bugs hidden"| A
 ```
 
-**Phase 1: spec-driven build in Kiro IDE.** I wrote the project as a spec first: requirements, design, and a task list (in `.kiro/specs/aws-security-audit-cli/`). Then I built it in [Kiro](https://kiro.dev) using its **Auto** model setting to keep token costs low. Every security decision traces back to a numbered requirement, and code comments cite them (e.g. `Req 11.4`).
+**Phase 1: design and build in Kiro.** I built the first version in [Kiro](https://kiro.dev), AWS's AI IDE, using the free credits AWS provides and the **Auto** model setting to make them last. The work went in rounds:
 
-**Phase 2: review, bug fixing, and hardening with Claude Code (Opus 5.5).** I used Claude Code to audit the whole codebase, reproduce each suspected bug with a script before changing anything, and fix the bugs with regression tests. Every new test fails on the old code and passes on the fixed code. The 5 bugs fixed:
+1. **Structure the idea.** Turn "audit an AWS account for common misconfigurations" into a spec: requirements, design and a task list (in `.kiro/specs/aws-security-audit-cli/`).
+2. **Add security layers.** Go beyond a basic audit script: least-privilege permissions, role-based access (an operator user that can only assume one read-only role), MFA on every login, time limits (15-minute keys, 10-minute idle lock), and nothing left on disk.
+3. **Review until satisfied.** Read and test each change before accepting it. Every security decision traces back to a numbered requirement, and code comments cite them (e.g. `Req 11.4`).
+
+**Phase 2: a second review with Claude Code (Opus 5.5).** Even after I was happy with phase 1, I used a different tool to check the work again and refine what was missing. Claude Code audited the whole codebase, reproduced each suspected bug with a script before changing anything, and fixed the bugs with regression tests. It also added the demo GIF and the animated walkthrough. Every new test fails on the old code and passes on the fixed code. The 5 bugs fixed:
 
 | Bug | Impact | Fix |
 |---|---|---|
@@ -214,14 +224,15 @@ flowchart LR
 | The read-only guard was installed before credentials were resolved | AWS SSO and web-identity profiles couldn't log in (the guard blocked `sso:GetRoleCredentials`) | Resolve credentials on a separate loader session, then make every API call through a guarded copy |
 | Ctrl+C before login | Printed a Python traceback, which the design forbids | Handled as a clean exit |
 
-Test suite: 56 → 63 tests, all passing.
+Test suite: 56 → 63 tests, all passing (64 now, with the demo-recording test).
 
 **Conclusions:**
 - **Passing tests aren't proof of no bugs.** All 56 original tests passed while 5 real bugs were there. The tests covered the paths the spec described, not hostile input or a real terminal.
 - **The bugs were at the boundaries.** Each one sat where the code meets something it doesn't control: text typed by the user, names that come from AWS, the filesystem, the terminal, and third-party credential providers. Mocks don't exercise those, so they need tests of their own.
 - **A security control can break a real use case.** The read-only guard also blocked AWS SSO logins. The fix keeps the guarantee (every call cloudguard makes is still filtered) and makes SSO work again.
 - **Prove the bug, then prove the fix.** Each bug was reproduced before any change. Each regression test was run against the old code to confirm it really catches the bug.
-- **Use each tool for what it's good at.** A low-cost model was enough to build from a clear spec. A stronger model was worth it for the review, where the hard part is finding what's wrong.
+- **Get a second opinion, from a different tool.** Phase 1 ended with a design I had reviewed several times and was happy with. A review with a different tool still found 5 bugs my own rounds had missed.
+- **Use each tool for what it's good at.** Kiro with the Auto model and free AWS credits was enough to build from a clear spec at low cost. A stronger model was worth it for the review, where the hard part is finding what's wrong.
 
 **Known gaps (next steps):**
 - S3-03 only looks at bucket policies, not ACLs.
@@ -344,5 +355,14 @@ To create the identities by hand instead of with CloudFormation, use `iam-operat
 ## Development sandbox
 
 `dev.sh` keeps every generated file in one folder, `$TMPDIR/cloudguard-sandbox/`, which holds the virtualenv, pip cache, and Python bytecode. Nothing is installed globally, and the project folder stays clean. Set `CLOUDGUARD_SANDBOX=/path` to use a different location.
+
+**Re-rendering the demo GIF.** `docs/demo.gif` is generated from a script, `docs/demo.tape`, using [VHS](https://github.com/charmbracelet/vhs) in Docker, so nothing is installed locally:
+
+```sh
+docker build -t cloudguard-vhs -f docs/vhs.Dockerfile .
+docker run --rm -v "$PWD:/vhs" cloudguard-vhs docs/demo.tape
+```
+
+The script fixes the demo MFA code with `CLOUDGUARD_DEMO_CODE`, because a recording can't read the random code off the screen. That variable only works in `--demo` mode, where there are no real credentials.
 
 **Stack:** Python 3.11+, boto3 1.43.110, rich 15.0.0, moto 5.2.3, pytest 9.1.1. All versions are pinned exactly.

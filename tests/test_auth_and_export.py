@@ -90,6 +90,16 @@ def test_demo_codes_are_random():
     assert all(len(c) == 6 and c.isdigit() for c in codes)
 
 
+def test_demo_code_can_be_fixed_for_recordings(monkeypatch):
+    config = AuthConfig("r", "m", "us-east-1", None)
+    monkeypatch.setenv("CLOUDGUARD_DEMO_CODE", "424242")
+    assert DemoAuthenticator(config).demo_code == "424242"
+
+    # Anything that isn't exactly 6 digits is ignored (random code instead).
+    monkeypatch.setenv("CLOUDGUARD_DEMO_CODE", "12345")
+    assert DemoAuthenticator(config).demo_code != "12345"
+
+
 # ============================================================
 # SECTION 2: Private export
 # ============================================================

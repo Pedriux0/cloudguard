@@ -24,6 +24,7 @@ Requirements covered: 1.1 - 1.6, 8.7, 9.3, 11.1 - 11.4
 from __future__ import annotations
 
 import hmac
+import os
 import re
 import secrets
 import time
@@ -248,6 +249,13 @@ class DemoAuthenticator(AwsAuthenticator):
         # SECURITY: `secrets` gives cryptographically strong randomness,
         # unlike `random`. A new code is generated every run.
         self.demo_code = f"{secrets.randbelow(1_000_000):06d}"
+
+        # Scripted screen recordings (docs/demo.tape) can't read the code
+        # off the screen, so they may fix it. Demo mode only: there are no
+        # real credentials behind it, and AwsAuthenticator ignores this.
+        fixed = os.environ.get("CLOUDGUARD_DEMO_CODE", "")
+        if MFA_CODE_PATTERN.fullmatch(fixed):
+            self.demo_code = fixed
 
     def _verify_code(self, mfa_code: str) -> None:
         super()._verify_code(mfa_code)
