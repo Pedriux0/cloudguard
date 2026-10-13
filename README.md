@@ -182,6 +182,26 @@ A test (`tests/test_guard.py`) fails if the allow-list in `guard.py`, `iam-polic
 
 I built cloudguard in two phases, using AI coding tools the way I'd use them on a team: as a fast first draft, and then as a reviewer that has to prove every bug it reports.
 
+```mermaid
+flowchart LR
+    subgraph P1["Phase 1: Kiro IDE, Auto model (low token cost)"]
+        direction TB
+        R["Requirements<br/>numbered, security-first"] --> D["Design<br/>3-layer read-only, MFA, auto-lock"]
+        D --> T["Task list"]
+        T --> B["Working tool<br/>12 CIS checks, 56 tests passing"]
+    end
+
+    subgraph P2["Phase 2: Claude Code, Opus 5.5 (review and hardening)"]
+        direction TB
+        A["Audit the whole codebase"] --> X["Reproduce each bug<br/>with a script first"]
+        X --> F["Fix: 5 bugs"]
+        F --> G["Regression tests<br/>fail on old code, pass on new"]
+        G --> S["63 tests passing<br/>README and known gaps updated"]
+    end
+
+    B -->|"all tests green,<br/>but 5 real bugs hidden"| A
+```
+
 **Phase 1: spec-driven build in Kiro IDE.** I wrote the project as a spec first: requirements, design, and a task list (in `.kiro/specs/aws-security-audit-cli/`). Then I built it in [Kiro](https://kiro.dev) using its **Auto** model setting to keep token costs low. Every security decision traces back to a numbered requirement, and code comments cite them (e.g. `Req 11.4`).
 
 **Phase 2: review, bug fixing, and hardening with Claude Code (Opus 5.5).** I used Claude Code to audit the whole codebase, reproduce each suspected bug with a script before changing anything, and fix the bugs with regression tests. Every new test fails on the old code and passes on the fixed code. The 5 bugs fixed:
@@ -195,6 +215,13 @@ I built cloudguard in two phases, using AI coding tools the way I'd use them on 
 | Ctrl+C before login | Printed a Python traceback, which the design forbids | Handled as a clean exit |
 
 Test suite: 56 → 63 tests, all passing.
+
+**Conclusions:**
+- **Passing tests aren't proof of no bugs.** All 56 original tests passed while 5 real bugs were there. The tests covered the paths the spec described, not hostile input or a real terminal.
+- **The bugs were at the boundaries.** Each one sat where the code meets something it doesn't control: text typed by the user, names that come from AWS, the filesystem, the terminal, and third-party credential providers. Mocks don't exercise those, so they need tests of their own.
+- **A security control can break a real use case.** The read-only guard also blocked AWS SSO logins. The fix keeps the guarantee (every call cloudguard makes is still filtered) and makes SSO work again.
+- **Prove the bug, then prove the fix.** Each bug was reproduced before any change. Each regression test was run against the old code to confirm it really catches the bug.
+- **Use each tool for what it's good at.** A low-cost model was enough to build from a clear spec. A stronger model was worth it for the review, where the hard part is finding what's wrong.
 
 **Known gaps (next steps):**
 - S3-03 only looks at bucket policies, not ACLs.
